@@ -1,0 +1,13 @@
+c85eda093e0c670c89186fb2f6f7400f *DESCRIPTION
+cbec6d7a2d2595c45546c844ccf7dab4 *NAMESPACE
+99a0625e7e72a6de9df5b70e56f5102c *R/composite.R
+ef6d7d0dfb7e17b300920de7bc2dac03 *R/misc.R
+ae78e80f67671a1afdfa9b39a839319f *data/BioDB.rda
+85d1c90b78d91e86a4ece0a412b3954a *man/BioDB.Rd
+ffe47c5facb9bcef775591cdc511d7af *man/distanceScores.Rd
+4d7041ab9dba0c0bc636838f6a2ef928 *man/factorComposite.Rd
+514ac82f84d60e8ced31d549554a4c65 *man/ldensity.Rd
+b26fdeb8228f7845f01c3b0d5afac7aa *man/mahalanobisComposite.Rd
+533df91e42cacd0fe82b29361d7922c0 *man/prepareComposite.Rd
+e8a6da5a12bac6b389dd70bf670c4366 *man/sumComposite.Rd
+db24ec2cdb12e6f9a9739d23015f9d92 *man/winsorizor.Rd
