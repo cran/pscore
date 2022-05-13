@@ -1,0 +1,61 @@
+pscore 0.4.0
+------------------------------------------------------------
+
+Updates to meet CRAN requirements.
+
+pscore 0.3.3
+------------------------------------------------------------
+
+BUG FIXES
+* Fixed issue with exporting methods.
+
+pscore 0.3.2
+------------------------------------------------------------
+
+NEW FEATURES
+
+* Minor update so that covariance matrices and
+  standard deviations can be calculated prior to thresholding,
+  if desired.
+
+CHANGES
+
+* winsorizor() has moved from pscore to JWileymisc and is then
+  imported from JWileymisc.  This was moved as winsorizor() is
+  relevant outside of pscore.
+
+
+pscore 0.3.1
+------------------------------------------------------------
+
+BUG FIXES
+
+* fixed several bugs in mahalanobisComposite related to how the number of components used (previously it failed if only a single component was used, and the loadings graph was incorrect).
+
+pscore 0.3.0
+------------------------------------------------------------
+
+NEW FEATURES
+
+* Added prediction methods for Mahalanobis, Sum, and Factor scores, to use an existing model to predict scores from new data.  Models are "smart" and retain features like standardization of raw data, winsorization, etc.
+* Added support for raw data transformations, which also apply to thresholds and are carried forward for predictions.
+
+pscore 0.2.0
+------------------------------------------------------------
+
+NEW FEATURES
+
+* Added a NEWS file
+
+MAJOR CHANGES
+
+* Moved to using S4 Classes for most objects
+
+pscore 0.1-1
+------------------------------------------------------------
+
+NEW FEATURES
+
+* function to winsorize data
+* function to calculate distance scores from thresholds (e.g., clinical thresholds for biomarkers)
+* Implemented three ways of creating composite scores via Mahalanobis distance, simple summing, and factor analysis

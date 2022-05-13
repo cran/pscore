@@ -1,115 +1,104 @@
-#' Calculate distance scores on data in preparation for composite scoring
+#' Prepare distance scores on data in preparation for composite scoring
 #'
-#' @param d The data
-#' @param g A grouping variable
-#' @param thresholds Thresholds to use when calculating distances
-#'   (e.g., median, clinical thresholds, etc.).  If groups are used,
-#'   must be thresholds for each group (e.g., to allow separate thresholds for
-#'   females and males).
-#' @param higherisbetter A logical vector for each biomarker whether higher scores
-#'   are better or not.
+#' @param object An object of class \sQuote{CompositeData}.
 #' @param winsorize Whether to winsorize the data or not.  Defaults to \code{FALSE}.
 #'   If not \code{FALSE}, the percentile to winsorize at.  For example, .01 would be
 #'   the .01 and the 1 - .01 percentiles.
+#' @param values The values to use for winsorization.  Optional.  If specified, preempts
+#'   the percentiles given by winsorize.
 #' @param better Logical indicating whether \dQuote{better} values than the threshold
 #'   are allowed. Defaults to \code{TRUE}.
-#' @param na.rm A logical whether missing values should be ommitted. Defaults to
-#'   \code{TRUE}.
-#' @param saveall A logical whether to save all intermediary datasets and graphs.
-#'   Defaults to \code{FALSE}.
-#' @return A list of results.
+#' #' @param object An DistanceScores class object
+#' @param covmat The covariance matrix to use.  If missing,
+#'   austomatically calculated from the data.
+#' @param standardize A logical value whether to standardize the data or not.
+#'   Defaults to \code{TRUE}.
+#' @param use.prethreshold A logical value whether to calculate covariance matrix
+#'   based on the data after winsorizing, but before applying the threshold.
+#'   Defaults to \code{FALSE}, so that covariances are calculated after thresholds
+#'   (if any) are applied.
+#' @return An S4 object of class \dQuote{CompositeReady}.
+#' @family prepare
+#' @importFrom JWileymisc winsorizor
+#' @importFrom stats cov
 #' @export
-#' @family composite
 #' @examples
 #' # this example creates distances for the built in mtcars data
 #' # see ?mtcars for more details
 #' # The distances are calculated from the "best" in the dataset
-#' # defined by these thresholds
-#' thresholds <- with(mtcars, c(
-#'   mpg = max(mpg),
-#'   hp = max(hp),
-#'   wt = min(wt),
-#'   qsec = min(qsec)))
-#'
-#' # higher mpg and hp are better,
-#' # whereas lower wt and qsec are better
-#' dres <- distanceScores(mtcars[, c("mpg", "hp", "wt", "qsec")],
-#'   thresholds = list(thresholds),
+#' # First we create an appropriate CompositeData class object
+#' # higher mpg & hp are better and lower wt & qsec are better
+#' d <- CompositeData(mtcars[, c("mpg", "hp", "wt", "qsec")],
+#'   thresholds = list(one = with(mtcars, c(
+#'     mpg = max(mpg),
+#'     hp = max(hp),
+#'     wt = min(wt),
+#'     qsec = min(qsec)))
+#'   ),
 #'   higherisbetter = c(TRUE, TRUE, FALSE, FALSE),
-#'   saveall = TRUE)
+#'   rawtrans = list(
+#'     mpg = function(x) x,
+#'     hp = function(x) x,
+#'     wt = function(x) x,
+#'     qsec = sqrt))
+#'
+#'
+#' # create the distance scores
+#' dres <- prepareComposite(d)
 #'
 #' # see a density plot of the distance scores
-#' dres$Density
+#' dres@@distanceDensity
+#' # regular summary of distance scores
+#' summary(dres@@distances)
 #'
+#' # examine covariance matrix
+#' round(dres@@covmat,2)
+
 #' # cleanup
-#' rm(thresholds, dres)
-distanceScores <- function(d, g, thresholds, higherisbetter, winsorize = FALSE, better = TRUE, na.rm = TRUE, saveall = FALSE) {
-  fcall <- match.call()
-
+#' rm(d, dres)
+#'
+prepareComposite <- function(object, winsorize = 0, values, better = TRUE,
+                             covmat, standardize = TRUE, use.prethreshold = FALSE) {
   # data and input checks
-  stopifnot(all(apply(d, 2, is.numeric)))
-  k <- ncol(d)
-
-  if (missing(higherisbetter)) {
-      higherisbetter <- rep(0, k)
-  }
-
-  if (missing(thresholds)) {
-      thresholds <- list(rep(0, k))
-  }
-
-  if (missing(g)) {
-      g <- rep("1", nrow(d))
-      stopifnot(identical(length(thresholds), 1L))
-      if (is.null(names(thresholds))) {
-        names(thresholds) <- "1"
-      }
-  }
-  ng <- length(unique(g))
-
-  stopifnot(identical(length(higherisbetter), k))
-  stopifnot(all(sapply(thresholds, length) == k))
-  stopifnot(identical(length(g), nrow(d)))
-
-  # handle missing values
-  if (na.rm) {
-      okindex <- which(rowSums(is.na(cbind(d, g))) == 0)
-      d <- d[okindex, ]
-      g <- g[okindex]
-      if (!identical(length(unique(g)), ng)) {
-          warning("After removing missing values, levels of grouping variable no longer equal")
-      }
-  }
-
-  if (any(unlist(thresholds) != 0) & saveall) d.original <- d
+  n <- nrow(object@rawdata)
+  ng <- length(unique(object@groups))
 
 
-  # create the threshold matrix
-  thresholdmatrix <- t(sapply(g, function(i) thresholds[[as.character(i)]]))
+  ## transform thresholds to match raw data transformations
+  thresholds <- object@thresholds
+  thresholds <- lapply(thresholds, function(x) {
+    sapply(1:object@k, function(i) {
+      object@rawtrans[[i]](x[i])
+    })
+  })
+
+  ## create the threshold matrix using the (transformed) thresholds
+  thresholdmatrix <- t(sapply(object@groups, function(i) thresholds[[as.character(i)]]))
   rownames(thresholdmatrix) <- NULL
-  colnames(thresholdmatrix) <- colnames(d)
+  colnames(thresholdmatrix) <- colnames(object@rawdata)
 
-  if (winsorize) {
-      d <- winsorizor(d, percentile = winsorize, na.rm = TRUE)
-      winsorized <- attr(d, "winsorized")
-      if (saveall) d.winsorize <- d
-  } else {
-      winsorized <- NULL
+  ## transform raw data, prior to windsorizing
+  d <- object@rawdata
+  d[] <- lapply(1:object@k, function(i) {
+    object@rawtrans[[i]](d[, i])
+  })
+
+  d <- winsorizor(d, percentile = winsorize, values = values, na.rm = TRUE)
+  winsorizedValues <- attr(d, "winsorizedValues")
+
+  if (use.prethreshold & missing(covmat)) {
+    covmat <- cov(d, use = "pairwise.complete.obs")
   }
 
-
-  d <- as.data.frame(sapply(1:k, function(i) {
-    if (higherisbetter[i] == 0) {
-      d[, i] - thresholdmatrix[, i]
-    } else if (higherisbetter[i] == 1) {
-      thresholdmatrix[, i] - d[, i]
+  d <- as.data.frame(sapply(1:object@k, function(i) {
+    if (object@higherisbetter[i] == 0) {
+      d[, i, drop = FALSE] - thresholdmatrix[, i, drop = FALSE]
+    } else if (object@higherisbetter[i] == 1) {
+      thresholdmatrix[, i, drop = FALSE] - d[, i, drop = FALSE]
     }
   }))
 
   colnames(d) <- colnames(thresholdmatrix)
-
-
-  if (saveall) d.distances <- d
 
   # if "better" than threshold are not allowed
   # than truncate at zero, otherwise leave as is
@@ -117,207 +106,151 @@ distanceScores <- function(d, g, thresholds, higherisbetter, winsorize = FALSE, 
       d <- as.data.frame(apply(d, 2, pmax, 0))
   }
 
-  if (saveall) {
-    data <- list(
-      Distance = if(!better) d.distances else NULL,
-      Winsorized = if(winsorize) d.winsorize else NULL,
-      Raw = if(exists("d.original")) d.original else NULL)
-
-    plots <- list(
-      Distance = if(!better) ldensity(cbind(d.distances, Group = g), melt = TRUE, g = "Group") else NULL,
-      Winsorized = if(winsorize) ldensity(cbind(d.winsorize, Group = g), melt = TRUE, g = "Group") else NULL,
-      Raw = if(exists("d.original")) ldensity(cbind(d.original, Group = g), melt = TRUE, g = "Group") else NULL)
-  } else {
-    plots <- data <- list(Distance = NULL, Windsorized = NULL, Raw = NULL)
+  if (!use.prethreshold & missing(covmat)) {
+    covmat <- cov(d, use = "pairwise.complete.obs")
   }
 
-  out <- list(
-      Distances = d,
-      Density = ldensity(cbind(d, Group = g), melt = TRUE, g = "Group"),
-      Groups = g,
-      SavedPlots = plots, SavedData = data,
-      thresholds = thresholds, higherisbetter = higherisbetter,
-      winsorize = winsorize, winsorized = winsorized,
-      better = better, na.rm = na.rm,
-      call = fcall)
-  class(out) <- c("distancescores", "list")
+  if (n > 2) {
+    dplot <- ldensity(cbind(d, Group = object@groups), melt = TRUE, g = "Group")
+  } else {
+    dplot <- NA
+  }
 
-  return(out)
+  stopifnot(identical(object@k, ncol(covmat)))
+
+  sigma <- sqrt(diag(covmat))
+
+  if (standardize) {
+    compdata <- sweep(d, 2, sigma, "/")
+  } else {
+    compdata <- d
+  }
+
+  CompositeReady(
+    data = as.data.frame(compdata),
+    covmat = covmat,
+    sigma = sigma,
+    standardize = standardize,
+    use.prethreshold = use.prethreshold,
+    distances = d,
+    distanceDensity = dplot,
+    winsorizedValues = winsorizedValues,
+    better = better,
+    rawdata = object@rawdata,
+    groups = object@groups,
+    thresholds = object@thresholds,
+    higherisbetter = object@higherisbetter,
+    k = object@k,
+    rawtrans = object@rawtrans
+  )
 }
-
-
-
-#' Prepare data to have a composite calculated
-#'
-#' @param object An object ready for use
-#' @param covmat The covariance matrix to use.  If missing,
-#'   austomatically calculated from the data.
-#' @param standardize A logical value whether to standardize the data or not.
-#'   Defaults to \code{TRUE}.
-#' @return A list of results.
-#' @export
-#' @family composite
-#' @examples
-#' # this example creates distances for the built in mtcars data
-#' # see ?mtcars for more details
-#' # The distances are calculated from the "best" in the dataset
-#' # defined by these thresholds
-#' thresholds <- with(mtcars, c(
-#'   mpg = max(mpg),
-#'   hp = max(hp),
-#'   wt = min(wt),
-#'   qsec = min(qsec)))
-#'
-#' # higher mpg and hp are better,
-#' # whereas lower wt and qsec are better
-#' dres <- distanceScores(mtcars[, c("mpg", "hp", "wt", "qsec")],
-#'   thresholds = list(thresholds),
-#'   higherisbetter = c(TRUE, TRUE, FALSE, FALSE),
-#'   saveall = TRUE)
-#'
-#' # see a density plot of the distance scores
-#' dres$Density
-#'
-#' # now prepare to create the composite
-#' # covariance matrix will be calculated from the data
-#' # and data will be standardized to unit variance by default
-#' cprep <- prepareComposite(dres)
-#' # cleanup
-#' rm(thresholds, dres, cprep)
-prepareComposite <- function(object, covmat, standardize = TRUE) {
-    if (!inherits(object, "distancescores")) {
-        warning(paste("Object is not of type 'distancescores'.",
-                      "prepareComposite() may not work correctly."))
-    }
-
-    k <- ncol(object$Distances)
-    if (missing(covmat)) {
-        covmat <- cov(object$Distances)
-    }
-
-    stopifnot(identical(k, ncol(covmat)))
-
-    sigma <- sqrt(diag(covmat))
-
-    if (standardize) {
-        data <- sweep(object$Distances, 2, sigma, "/")
-    } else {
-        data <- object$Distances
-    }
-
-    out <- c(list(
-        data = data,
-        covmat = covmat,
-        sigma = sigma,
-        standardize = standardize,
-        k = k), object)
-
-    class(out) <- c("compositedata", "list")
-
-    return(out)
-}
-
 
 #' Score Data Using the Mahalanobis Distance
 #'
 #' Create a composite using the Mahalanobis Distance
 #'
-#' @param object An object of class \code{compositedata} ready for use
+#' @param object An object of class \code{CompositeReady}
 #' @param ncomponents the number of components to use from the
 #'   principal component analysis. If missing, defaults to the
 #'   number of columns in the data.
-#' @return A list of results.
+#' @param pca An optional PCA object from princomp to use.
+#'   If not passed, will be calculated from the data.
+#' @return An S4 object of class \code{MahalanobisScores}.
 #' @export
+#' @importFrom stats princomp
 #' @family composite
 #' @examples
 #' # this example creates distances for the built in mtcars data
 #' # see ?mtcars for more details
 #' # The distances are calculated from the "best" in the dataset
-#' # defined by these thresholds
-#' thresholds <- with(mtcars, c(
-#'   mpg = max(mpg),
-#'   hp = max(hp),
-#'   wt = min(wt),
-#'   qsec = min(qsec)))
+#' # First we create an appropriate CompositeData class object
+#' # higher mpg & hp are better and lower wt & qsec are better
+#' d <- CompositeData(mtcars[, c("mpg", "hp", "wt", "qsec")],
+#'   thresholds = list(one = with(mtcars, c(
+#'     mpg = max(mpg),
+#'     hp = max(hp),
+#'     wt = min(wt),
+#'     qsec = min(qsec)))
+#'   ),
+#'   higherisbetter = c(TRUE, TRUE, FALSE, FALSE))
 #'
-#' # higher mpg and hp are better,
-#' # whereas lower wt and qsec are better
-#' dres <- distanceScores(mtcars[, c("mpg", "hp", "wt", "qsec")],
-#'   thresholds = list(thresholds),
-#'   higherisbetter = c(TRUE, TRUE, FALSE, FALSE),
-#'   saveall = TRUE)
-#'
-#' # see a density plot of the distance scores
-#' dres$Density
-#'
-#' # now prepare to create the composite
+#' # create the distance scores
+#' # and the composite
 #' # covariance matrix will be calculated from the data
 #' # and data will be standardized to unit variance by default
-#' cprep <- prepareComposite(dres)
+#' dres <- prepareComposite(d)
+#'
+#' # see a density plot of the distance scores
+#' dres@@distanceDensity
+#' # regular summary of distance scores
+#' summary(dres@@distances)
+#'
+#' # examine covariance matrix
+#' round(dres@@covmat,2)
 #'
 #' # now we can create the composite based on mahalanobis distances
 #' # from our defined thresholds
-#' mcomp <- mahalanobisComposite(cprep)
+#' mcomp <- mahalanobisComposite(dres, 1)
 #'
 #' # view a histogram of the composite scores
-#' mcomp$ScoreHistogram
+#' mcomp@@scoreHistogram
 #'
 #' # summarize the composite scores
-#' summary(mcomp$Scores)
+#' summary(mcomp@@scores)
 #'
 #' # check the screeplot and loadings
-#' mcomp$Screeplot
-#' mcomp$LoadingGraph
+#' mcomp@@screePlot
+#' mcomp@@loadingGraph
 #' # examine the loadings as a table
-#' mcomp$LoadingTable
+#' mcomp@@loadingTable
 #'
 #' # one component is adequate to explain these data
 #' # to be safe can pick first two and re-run model
 #'
 #' # use only first two components
-#' mcomp2 <- mahalanobisComposite(cprep, ncomponents = 2)
+#' mcomp2 <- mahalanobisComposite(dres, ncomponents = 2)
 #'
 #' # view a histogram of the updated composite scores
-#' mcomp2$ScoreHistogram
+#' mcomp2@@scoreHistogram
 #'
 #' # summarize the composite scores
-#' summary(mcomp2$Scores)
+#' summary(mcomp2@@scores)
 #'
 #' # compare using all versus two components
-#' plot(mcomp$Scores, mcomp2$Scores)
+#' plot(mcomp@@scores, mcomp2@@scores)
 #'
 #' # cleanup
-#' rm(thresholds, dres, cprep, mcomp, mcomp2)
-mahalanobisComposite <- function(object, ncomponents) {
-  if (!inherits(object, "compositedata")) {
-      warning(paste("Object is not of type 'compositedata'.",
-                    "mahalanobisComposite() may not work correctly."))
-  }
+#' rm(d, dres, mcomp, mcomp2)
+mahalanobisComposite <- function(object, ncomponents, pca) {
+  stopifnot(is(object, "CompositeReady"))
 
   if (missing(ncomponents)) {
-    ncomponents <- object$k
+    ncomponents <- object@k
   }
 
-  stopifnot(ncomponents <= object$k)
+  stopifnot(ncomponents <= object@k)
 
-  pca <- princomp(scores = FALSE, cor = object$standardize, covmat = object$covmat)
+  if (missing(pca)) {
+    pca <- princomp(scores = FALSE, cor = object@standardize, covmat = object@covmat)
+  }
 
-  screeplot <- ggplot(data.frame(Component = 1:object$k, Eigenvalue = pca$sdev^2),
+  screeplot <- ggplot(data.frame(Component = 1:object@k, Eigenvalue = pca$sdev^2),
     aes(Component, Eigenvalue)) +
     geom_line() + geom_point() +
     geom_hline(aes(yintercept = 1)) +
-    scale_x_continuous(breaks = 1:object$k) +
+    scale_x_continuous(breaks = 1:object@k) +
     theme_classic()
 
   Lbase <- as.matrix(pca$loadings[])
 
   ltab <- Lbase
-  colnames(ltab) <- paste0("C", 1:object$k)
+  colnames(ltab) <- paste0("C", 1:object@k)
   ltab[] <- format(round(ltab, 2), nsmall=2, digits=2)
+  ltab <- ltab[, 1:ncomponents, drop = FALSE]
 
-  L <- as.data.frame(pca$loadings[, 1:ncomponents])
+  L <- as.data.frame(pca$loadings[, 1:ncomponents, drop = FALSE])
   colnames(L) <- paste0("Comp", 1:ncomponents)
-  L$Variable <- factor(rownames(L), levels = colnames(object$data)[1:ncomponents])
+  L$Variable <- factor(rownames(L), levels = colnames(object@data)[1:object@k])
   L <- melt(L, id.vars = "Variable")
 
   loadingsplot <- ggplot(L, aes(Variable, abs(value), fill = ifelse(value > 0, "positive", "negative"))) +
@@ -329,33 +262,37 @@ mahalanobisComposite <- function(object, ncomponents) {
     theme_classic() +
     theme(axis.text.x = element_text(angle = 90, vjust=.5))
 
-  c.scores <- as.matrix(object$data) %*% Lbase %*% diag(1/pca$sdev)
+  c.scores <- as.matrix(object@data) %*% Lbase %*% diag(1/pca$sdev)
   c.scores <- as.data.frame(c.scores)
-  colnames(c.scores) <- paste0("C", 1:object$k)
+  colnames(c.scores) <- paste0("C", 1:object@k)
 
-  finalScores <- sqrt(rowSums(c.scores[, 1:ncomponents]^2))
+  finalScores <- sqrt(rowSums(c.scores[, 1:ncomponents, drop = FALSE]^2))
   # alternate way
   # finalScores <- sqrt(rowSums((data %*% solve(cov2cor(covmat))) * data))
 
-  out <- c(list(
-      Scores = finalScores,
-      ScoreHistogram = ldensity(data.frame(Scores = finalScores), x = "Scores", hist = TRUE),
-      Screeplot = screeplot,
-      LoadingGraph = loadingsplot,
-      LoadingTable = ltab), object)
-  class(out) <- c("mahalanobiscomposite", "list")
+  class(pca) <- "list"
 
-  return(out)
+  new("MahalanobisScores",
+      scores = finalScores,
+      scoreHistogram = ldensity(data.frame(Scores = finalScores), x = "Scores", hist = TRUE),
+      screePlot = screeplot,
+      loadingGraph = loadingsplot,
+      loadingTable = ltab,
+      pca = pca,
+      ncomponents = ncomponents,
+      CompositeReady = object)
 }
 
 # clear R CMD CHECK notes
-if(getRversion() >= "2.15.1")  utils::globalVariables(c("Component", "Eigenvalue", "Variable", "value"))
+if (getRversion() >= "2.15.1") {
+  utils::globalVariables(c("Component", "Eigenvalue", "Variable", "value"))
+}
 
 #' Score Data Using a simple sum
 #'
 #' Create a composite using summation
 #'
-#' @param object An object ready for use
+#' @param object An object of class \code{CompositeReady}
 #' @param transform A character string indicating the type of transformation to use.
 #'   One of \dQuote{square}, \dQuote{abs}, or \dQuote{none}, which either sums the raw data,
 #'   sums the squared data and then takes the square root, or sums the absolute values of the
@@ -365,114 +302,109 @@ if(getRversion() >= "2.15.1")  utils::globalVariables(c("Component", "Eigenvalue
 #' @param systems An optional list where each element is a character vector of the
 #'   variable names within a particular system.  If given, scores are first averaged
 #'   within a system, before being aggregated across systems.
-#' @return A list of results.
+#' @return An S4 object of class \code{SumScores}.
 #' @export
 #' @family composite
 #' @examples
 #' # this example creates distances for the built in mtcars data
 #' # see ?mtcars for more details
 #' # The distances are calculated from the "best" in the dataset
-#' # defined by these thresholds
-#' thresholds <- with(mtcars, c(
-#'   mpg = max(mpg),
-#'   hp = max(hp),
-#'   wt = min(wt),
-#'   qsec = min(qsec)))
+#' # First we create an appropriate CompositeData class object
+#' # higher mpg & hp are better and lower wt & qsec are better
+#' d <- CompositeData(mtcars[, c("mpg", "hp", "wt", "qsec")],
+#'   thresholds = list(one = with(mtcars, c(
+#'     mpg = max(mpg),
+#'     hp = max(hp),
+#'     wt = min(wt),
+#'     qsec = min(qsec)))
+#'   ),
+#'   higherisbetter = c(TRUE, TRUE, FALSE, FALSE))
 #'
-#' # higher mpg and hp are better,
-#' # whereas lower wt and qsec are better
-#' dres <- distanceScores(mtcars[, c("mpg", "hp", "wt", "qsec")],
-#'   thresholds = list(thresholds),
-#'   higherisbetter = c(TRUE, TRUE, FALSE, FALSE),
-#'   saveall = TRUE)
-#'
-#' # see a density plot of the distance scores
-#' dres$Density
-#'
-#' # now prepare to create the composite
+#' # create the distance scores
+#' # and the composite
 #' # covariance matrix will be calculated from the data
 #' # and data will be standardized to unit variance by default
-#' cprep <- prepareComposite(dres)
+#' dres <- prepareComposite(d)
+#'
+#' # see a density plot of the distance scores
+#' dres@@distanceDensity
+#' # regular summary of distance scores
+#' summary(dres@@distances)
+#'
+#' # examine covariance matrix
+#' round(dres@@covmat,2)
 #'
 #' # now we can create the composite based on summing the (standardized)
 #' # distances from our defined thresholds
 #' # by default, distances are squared, then summed, and then square rooted
 #' # to be back on the original scale
-#' scomp <- sumComposite(cprep, "square", "sum")
+#' scomp <- sumComposite(dres, "square", "sum")
 #'
 #' # view a histogram and summary of the composite scores
-#' scomp$ScoreHistogram
-#' summary(scomp$Scores)
+#' scomp@@scoreHistogram
+#' summary(scomp@@scores)
 #'
 #' # calculate average (mean) instead of sum
-#' scomp2 <- sumComposite(cprep, "square", "mean")
+#' scomp2 <- sumComposite(dres, "square", "mean")
 #'
 #' # view a histogram and summary of the composite scores
-#' scomp2$ScoreHistogram
-#' summary(scomp2$Scores)
+#' scomp2@@scoreHistogram
+#' summary(scomp2@@scores)
 #'
-#' # scores are still the same
-#' plot(scomp$Scores, scomp2$Scores)
+#' # scores are still the same (just different scaling)
+#' plot(scomp@@scores, scomp2@@scores)
 #'
 #' # first average scores within a system, then sum
-#' # note that within a system, scores are always averaged,
-#' # never summed.
-#' scomp3 <- sumComposite(cprep, "square", "sum",
+#' # within a system, scores are always averaged, never summed
+#' scomp3 <- sumComposite(dres, "square", "sum",
 #'   systems = list(
 #'     environment = c("mpg"),
 #'     performance = c("hp", "qsec", "wt")))
 #'
 #' # view a histogram and summary of the composite scores
-#' scomp3$ScoreHistogram
-#' summary(scomp3$Scores)
+#' scomp3@@scoreHistogram
+#' summary(scomp3@@scores)
 #'
 #' # compare all three scores
 #' # because of the different number of indicators within each system
 #' # there is a re-weighting for S3
-#' plot(data.frame(S1 = scomp$Scores, S2 = scomp2$Scores, S3 = scomp3$Scores))
+#' plot(data.frame(S1 = scomp@@scores, S2 = scomp2@@scores, S3 = scomp3@@scores))
 #'
 #' # cleanup
-#' rm(thresholds, dres, cprep, scomp, scomp2, scomp3)
-sumComposite <- function(object, transform = c("square", "abs", "none"), type = c("sum", "mean"),
-                         systems) {
-  if (!inherits(object, "compositedata")) {
-      warning(paste("Object is not of type 'compositedata'.",
-                    "sumComposite() may not work correctly."))
-  }
+#' rm(d, dres, scomp, scomp2, scomp3)
+sumComposite <- function(object, transform = c("square", "abs", "none"), type = c("sum", "mean"), systems) {
+  stopifnot(is(object, "CompositeReady"))
 
   transform <- match.arg(transform)
+  type <- match.arg(type)
+
   aggregator <- switch(type,
                        sum = rowSums,
                        mean = rowMeans)
+  ## switch function to transform data (to) and backtransform (back)
+  trans <- switch(transform,
+               square = list(to = function(x) x^2, back = sqrt),
+               abs = list(to = abs, back = I),
+               none = list(to = I, back = I))
 
   if (!missing(systems)) {
-      x <- sapply(systems, function(v) {
-        switch(transform,
-          square = rowMeans(object$data[, v, drop = FALSE]^2),
-          abs = rowMeans(abs(object$data[, v, drop = FALSE])),
-          none = rowMeans(object$data[, v, drop = FALSE]))
-       })
-      finalScores <- switch(transform,
-         square = sqrt(aggregator(x)),
-         abs = aggregator(x),
-         none = aggregator(x))
+      x <- do.call(cbind, lapply(systems, function(v) {
+        rowMeans(trans$to(object@data[, v, drop = FALSE]))
+      }))
+      finalScores <- trans$back(aggregator(x))
   } else {
-      finalScores <- switch(transform,
-        square = sqrt(aggregator(object$data^2)),
-        abs = aggregator(abs(object$data)),
-        none = aggregator(object$data))
-      systems <- NULL
+      finalScores <- trans$back(aggregator(trans$to(object@data)))
+      systems <- list(NA_character_)
   }
 
-  out <- c(list(
-      Scores = finalScores,
-      ScoreHistogram = ldensity(data.frame(Scores = finalScores), x = "Scores", hist = TRUE),
+  new("SumScores",
+      scores = as.numeric(finalScores),
+      scoreHistogram = ldensity(data.frame(Scores = finalScores), x = "Scores", hist = TRUE),
       transform = transform,
       type = type,
-      systems = systems), object)
-  class(out) <- c("sumcomposite", "list")
-
-  return(out)
+      trans = trans,
+      systems = systems,
+      CompositeReady = object)
 }
 
 
@@ -480,11 +412,11 @@ sumComposite <- function(object, transform = c("square", "abs", "none"), type = 
 #'
 #' Create a composite using a Factor Model
 #'
-#' @param object An object ready for use
+#' @param object An object of class \code{CompositeReady}
 #' @param type A character string indicating the type of factor model to use
 #' @param factors A named list where names are the factor names and each
 #'   element is a character string of the indicator names.
-#' @return A list of results.
+#' @return An S4 object of class \code{FactorScores}.
 #' @import lavaan
 #' @export
 #' @family composite
@@ -492,53 +424,70 @@ sumComposite <- function(object, transform = c("square", "abs", "none"), type = 
 #' # this example creates distances for the built in mtcars data
 #' # see ?mtcars for more details
 #' # The distances are calculated from the "best" in the dataset
-#' # defined by these thresholds
-#' thresholds <- with(mtcars, c(
-#'   mpg = max(mpg),
-#'   hp = max(hp),
-#'   wt = min(wt),
-#'   qsec = min(qsec)))
+#' # First we create an appropriate CompositeData class object
+#' # higher mpg & hp are better and lower wt & qsec are better
+#' d <- CompositeData(mtcars[, c("mpg", "hp", "wt", "qsec")],
+#'   thresholds = list(one = with(mtcars, c(
+#'     mpg = max(mpg),
+#'     hp = max(hp),
+#'     wt = min(wt),
+#'     qsec = min(qsec)))
+#'   ),
+#'   higherisbetter = c(TRUE, TRUE, FALSE, FALSE))
 #'
-#' # higher mpg and hp are better,
-#' # whereas lower wt and qsec are better
-#' dres <- distanceScores(mtcars[, c("mpg", "hp", "wt", "qsec")],
-#'   thresholds = list(thresholds),
-#'   higherisbetter = c(TRUE, TRUE, FALSE, FALSE),
-#'   saveall = TRUE)
-#'
-#' # see a density plot of the distance scores
-#' dres$Density
-#'
-#' # now prepare to create the composite
+#' # create the distance scores
+#' # and the composite
 #' # covariance matrix will be calculated from the data
 #' # and data will be standardized to unit variance by default
-#' cprep <- prepareComposite(dres)
+#' dres <- prepareComposite(d)
+#'
+#' # see a density plot of the distance scores
+#' dres@@distanceDensity
+#' # regular summary of distance scores
+#' summary(dres@@distances)
+#'
+#' # examine covariance matrix
+#' round(dres@@covmat,2)
 #'
 #' # now we can create the composite based on summing the (standardized)
 #' # distances from our defined thresholds
 #' # by default, distances are squared, then summed, and then square rooted
 #' # to be back on the original scale
-#' fcomp <- factorComposite(cprep, type = "onefactor")
+#' fcomp <- factorComposite(dres, type = "onefactor")
 #'
 #' # view a histogram of the composite scores
-#' fcomp$ScoreHistogram
+#' fcomp@@scoreHistogram
 #'
 #' # summarize the composite scores
-#' summary(fcomp$Scores$Comp)
+#' summary(fcomp@@scores)
+#'
+#' \dontrun{
+#' # we can also fit a second-order factor model
+#' # there are not enough indicators to identify the factor
+#' # and so lavaan gives us warning messages
+#' fcomp2 <- factorComposite(dres, type = "secondorderfactor",
+#'   factors = list(speed = c("hp", "qsec")))
+#'
+#' # view a histogram of the composite scores
+#' fcomp2@@scoreHistogram
+#'
+#' # summarize the composite scores
+#' summary(fcomp2@@scores)
+#'
+#' # compare one and second-order factor model scores
+#' plot(fcomp@@scores, fcomp2@@scores)
 #'
 #' # cleanup
-#' rm(thresholds, dres, cprep, fcomp)
-factorComposite <- function(object, type = c("onefactor", "secondorderfactor", "bifactor"), factors = "") {
+#' rm(d, dres, fcomp, fcomp2)
+#' }
+factorComposite <- function(object, type = c("onefactor", "secondorderfactor", "bifactor"), factors = list(NA_character_)) {
+    stopifnot(is(object, "CompositeReady"))
     type <- match.arg(type)
-    if (!inherits(object, "compositedata")) {
-        warning(paste("Object is not of type 'compositedata'.",
-                      "factorComposite() may not work correctly."))
-    }
 
-    vars <- colnames(object$data)
+    vars <- colnames(object@data)
     unused <- setdiff(vars, unlist(factors))
 
-    onefactor <- paste0("Comp =~ ", paste(vars, collapse = " + "))
+    onefactor <- paste0("Composite =~ ", paste(vars, collapse = " + "))
 
     m.factors <- paste(sapply(1:length(factors), function(i) {
         sprintf("%s =~ %s", names(factors)[i],
@@ -557,28 +506,31 @@ factorComposite <- function(object, type = c("onefactor", "secondorderfactor", "
         m.factors.covariances <- ""
     }
 
-    m.overall <- paste0("Comp =~ ", paste(c(names(factors), unused), collapse = " + "))
+    m.overall <- paste0("Composite =~ ", paste(c(names(factors), unused), collapse = " + "))
 
     secondorderfactor <- paste(m.factors, m.overall, sep = "\n")
 
     bifactor <- paste(
         m.factors,
         onefactor,
-        paste(paste("Comp ~~ 0 * ", names(factors)), collapse = "\n"),
+        paste(paste("Composite ~~ 0 * ", names(factors)), collapse = "\n"),
         paste(unlist(m.factors.covariances), collapse = "\n"),
         sep = "\n")
 
     fit <- switch(type,
-                  onefactor = sem(onefactor, data = object$data),
-                  secondorderfactor = sem(secondorderfactor, data = object$data),
-                  bifactor = sem(bifactor, data = object$data))
+                  onefactor = sem(onefactor, data = object@data),
+                  secondorderfactor = sem(secondorderfactor, data = object@data),
+                  bifactor = sem(bifactor, data = object@data))
 
-    out <- c(list(
-      Scores = as.data.frame(predict(fit)),
-      ScoreHistogram = ldensity(as.data.frame(predict(fit)), x = "Comp", hist = TRUE),
-      Fit = fit), object)
+    factorScores <- as.data.frame(predict(fit))
+    finalScores <- factorScores$Composite
 
-  class(out) <- c("factorcomposite", "list")
-
-  return(out)
+    new("FactorScores",
+      scores = finalScores,
+      scoreHistogram = ldensity(data.frame(Scores = finalScores), x = "Scores", hist = TRUE),
+      factorScores = factorScores,
+      type = type,
+      factors = factors,
+      Fit = fit,
+      CompositeReady = object)
 }

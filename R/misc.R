@@ -12,26 +12,38 @@
 #'   used as id.var as well.
 #' @param hist Logical whether to make a density plot or histogram (if TRUE).
 #' @return A ggplot2 graph.
-#' @import ggplot2 reshape2
+#' @import methods ggplot2 reshape2
 #' @examples
 #' # simple facetted plot
 #' pscore:::ldensity(mtcars, TRUE)
 #' # simple coloured plot
-#' pscore:::ldensity(mtcars, x = "mpg", g = "factor(cyl)")
+#' pscore:::ldensity(mtcars, x = "mpg", g = "cyl")
 ldensity <- function(data, melt = FALSE, x, facet, g, hist=FALSE) {
     data <- as.data.frame(data)
+
     if (melt) {
+        if (!missing(x)) stop("Cannot specifiy both melt = TRUE and an 'x' variable")
+        if (!missing(facet)) stop("Cannot specifiy both melt = TRUE and a facet variable")
+
+
         if (!missing(g)) {
-            data <- melt(data, id.var = g)
+            data <- melt(data, measure.vars = setdiff(colnames(data), g), id.var = g)
         } else {
-            data <- melt(data)
+            data <- melt(data, measure.vars = colnames(data))
         }
         x <- "value"
         facet <- ~variable
     }
 
     if (!missing(g)) {
-        p <- ggplot(data, aes_string(x = x, color = g))
+        if (!(is.character(data[, g]) || is.factor(data[, g]))) {
+            data[, g] <- factor(data[, g])
+        }
+        if (hist) {
+            p <- ggplot(data, aes_string(x = x, color = g, fill = g))
+        } else {
+            p <- ggplot(data, aes_string(x = x, color = g))
+        }
     } else {
         p <- ggplot(data, aes_string(x = x))
     }
@@ -48,59 +60,29 @@ ldensity <- function(data, melt = FALSE, x, facet, g, hist=FALSE) {
     p + theme_bw()
 }
 
-#' Winsorize at specified percentiles
+#' Drop unnecessary data from a MahalanobisComposite object.
 #'
-#' Simple function winsorizes data at the specified percentile.
+#' This function removes graphs and other sensitive data.
 #'
-#' @param d A vector, matrix, or data frame to be winsorized
-#' @param percentile The percentile bounded by [0, 1] to winsorize data at
-#' @param na.rm A logical whether to remove NAs.
-#' @return winsorized data. Attributes are included to list the exact values
-#'   (for each variable, if a data frame or matrix) used to winsorize
-#'   at the lower and upper ends.
+#' @param object A MahalanobisComposite object
+#' @return A MahalanobisComposite object with some slots replaced with missing values
 #' @export
 #' @examples
-#' dev.new(width = 10, height = 5)
-#' par(mfrow = c(1, 2))
-#' hist(as.vector(eurodist), main = "Eurodist")
-#' hist(winsorizor(as.vector(eurodist), .05), main = "Eurodist with lower and upper\n5% winsorized")
-winsorizor <- function(d, percentile, na.rm = TRUE) {
-    stopifnot(percentile >= 0 && percentile <= 1)
-    stopifnot(is.vector(d) || is.matrix(d) || is.data.frame(d))
-
-    f <- function(x, percentile, na.rm) {
-          low <- quantile(x, probs = 0 + percentile, na.rm = na.rm)
-          high <- quantile(x, probs = 1 - percentile, na.rm = na.rm)
-
-          out <- pmin(pmax(x, low), high)
-
-          new.attr <- data.frame(low = low, high = high, percentile = percentile)
-          rownames(new.attr) <- NULL
-
-          attributes(out) <- c(attributes(x), winsorized = list(new.attr))
-
-          return(out)
-    }
-
-    if (is.vector(d)) {
-        out <- f(d, percentile = percentile, na.rm = na.rm)
-    } else if (is.matrix(d) || is.data.frame(d)) {
-
-        tmp <- lapply(1:ncol(d), function(i) f(d[, i], percentile = percentile, na.rm = na.rm))
-        all.attr <- do.call(rbind, lapply(tmp, function(x) attr(x, "winsorized")))
-        all.attr$variable <- colnames(d)
-        rownames(all.attr) <- NULL
-
-        if (is.matrix(d)) {
-            out <- as.matrix(as.data.frame(tmp))
-        } else {
-            out <- as.data.frame(tmp)
-        }
-        attributes(out) <- c(attributes(d), winsorized = list(all.attr))
-    }
-
-    return(out)
+#' # make me!!!
+dropData <- function(object) {
+  object@scores <- NA_real_
+  object@scoreHistogram <- NA_real_
+  object@screePlot <- NA_real_
+  object@loadingGraph <- NA_real_
+  object@loadingTable <- matrix(NA_real_)
+  object@CompositeReady@data <- data.frame(NA_real_)
+  object@CompositeReady@distances <- data.frame(NA_real_)
+  object@CompositeReady@rawdata <- data.frame(NA_real_)
+  object@CompositeReady@groups <- ""
+  object@CompositeReady@distanceDensity <- list()
+  return(object)
 }
+
 
 
 #' @name BioDB
