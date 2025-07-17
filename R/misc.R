@@ -40,12 +40,12 @@ ldensity <- function(data, melt = FALSE, x, facet, g, hist=FALSE) {
             data[, g] <- factor(data[, g])
         }
         if (hist) {
-            p <- ggplot(data, aes_string(x = x, color = g, fill = g))
+            p <- ggplot(data, aes(x = .data[[x]], color = .data[[g]], fill = .data[[g]]))
         } else {
-            p <- ggplot(data, aes_string(x = x, color = g))
+            p <- ggplot(data, aes(x = .data[[x]], color = .data[[g]]))
         }
     } else {
-        p <- ggplot(data, aes_string(x = x))
+        p <- ggplot(data, aes(x = .data[[x]]))
     }
 
     if (hist) {

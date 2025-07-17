@@ -1,7 +1,12 @@
+pscore 0.4.1
+------------------------------------------------------------
+
+* Remove use of deprecated `aes_string()` in ggplot2.
+
 pscore 0.4.0
 ------------------------------------------------------------
 
-Updates to meet CRAN requirements.
+* Updates to meet CRAN requirements.
 
 pscore 0.3.3
 ------------------------------------------------------------
